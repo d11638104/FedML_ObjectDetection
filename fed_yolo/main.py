@@ -110,7 +110,7 @@ def load_data(args): # load COCO dataset, and split it into client_num equal par
     test_data_global = ListDataset(valid_path, img_size=args.img_size, multiscale=False, transform=DEFAULT_TRANSFORMS, arg=args) # load complete testing data
     train_data_num = len(train_data_global)
     test_data_num = len(test_data_global)
-    # 將資料平均分給client，ex: 1~1000給client 1，1001~2000給client 2...
+    # allocate data to every client. EX: no.1~no.1000 to client 1, no.1001~no.2000 to client 2, etc.
     train_data_local_num_dict, train_data_local_dict = train_data_global.split(args, args.client_num_in_total, "train")
     _, test_data_local_dict = test_data_global.split(args, args.client_num_in_total, "test")
         
