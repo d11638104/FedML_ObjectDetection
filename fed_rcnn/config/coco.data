@@ -1,0 +1,6 @@
+classes= 80
+train=../fed_yolo/data/coco/trainvalno5k.txt
+valid=../fed_yolo/data/coco/5k.txt
+names=../fed_yolo/data/coco.names
+backup=backup/
+eval=coco

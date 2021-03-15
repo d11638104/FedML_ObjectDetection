@@ -5,8 +5,10 @@ import random
 import numpy as np
 import torch
 import wandb
+import os
 
 from fedml_api.standalone.fedavg.client import Client
+from statistics import *
 
 
 class FedAvgAPI(object):
@@ -37,7 +39,9 @@ class FedAvgAPI(object):
             self.client_list.append(c)
         logging.info("############setup_clients (END)#############")
 
-    def train(self):
+    def train(self, args):
+        os.makedirs("output", exist_ok=True)
+        os.makedirs("checkpoints", exist_ok=True)
         w_global = self.model_trainer.get_model_params()
         for round_idx in range(self.args.comm_round):
 
@@ -68,17 +72,25 @@ class FedAvgAPI(object):
             # update global weights
             w_global = self._aggregate(w_locals)
             self.model_trainer.set_model_params(w_global)
+            if round_idx % args.checkpoint_interval == 0: # after args.checkpoint_interval epochs store a checkpoint
+                torch.save(self.model_trainer.get_model_params(), f"checkpoints/yolov3_ckpt_%d.pth" % round_idx)
 
             # test results
             # at last round
             if round_idx == self.args.comm_round - 1:
-                self._local_test_on_all_clients(round_idx)
+                if self.args.dataset.startswith("COCO"): # show testing results in detection metrics
+                    self._detection_test_on_all_clients(round_idx)
+                else:
+                    self._local_test_on_all_clients(round_idx)
             # per {frequency_of_the_test} round
             elif round_idx % self.args.frequency_of_the_test == 0:
                 if self.args.dataset.startswith("stackoverflow"):
                     self._local_test_on_validation_set(round_idx)
                 else:
-                    self._local_test_on_all_clients(round_idx)
+                    if self.args.dataset.startswith("COCO"): # show testing results in detection metrics
+                        self._detection_test_on_all_clients(round_idx)
+                    else:
+                        self._local_test_on_all_clients(round_idx)
 
     def _client_sampling(self, round_idx, client_num_in_total, client_num_per_round):
         if client_num_in_total == client_num_per_round:
@@ -177,6 +189,83 @@ class FedAvgAPI(object):
         stats = {'test_acc': test_acc, 'test_loss': test_loss}
         wandb.log({"Test/Acc": test_acc, "round": round_idx})
         wandb.log({"Test/Loss": test_loss, "round": round_idx})
+        logging.info(stats)
+        
+    def _detection_test_on_all_clients(self, round_idx): # change metrics to those used in detection
+
+        logging.info("################local_test_on_all_clients : {}".format(round_idx))
+
+        train_metrics = {
+            "precision": [],
+            "recall": [],
+            "vmAP": [],
+            "f1": [],
+        }
+
+        test_metrics = {
+            "precision": [],
+            "recall": [],
+            "vmAP": [],
+            "f1": [],
+        }
+
+        client = self.client_list[0]
+
+        for client_idx in range(self.args.client_num_in_total):
+            """
+            Note: for datasets like "fed_CIFAR100" and "fed_shakespheare",
+            the training client number is larger than the testing client number
+            """
+            if self.test_data_local_dict[client_idx] is None:
+                continue
+            client.update_local_dataset(0, self.train_data_local_dict[client_idx],
+                                        self.test_data_local_dict[client_idx],
+                                        self.train_data_local_num_dict[client_idx])
+            # train data
+            train_local_metrics = client.local_test(False)
+            train_metrics['precision'].append(copy.deepcopy(train_local_metrics['precision']))
+            train_metrics['recall'].append(copy.deepcopy(train_local_metrics['recall']))
+            train_metrics['vmAP'].append(copy.deepcopy(train_local_metrics['vmAP']))
+            train_metrics['f1'].append(copy.deepcopy(train_local_metrics['f1']))
+
+            # test data
+            test_local_metrics = client.local_test(True)
+            test_metrics['precision'].append(copy.deepcopy(test_local_metrics['precision']))
+            test_metrics['recall'].append(copy.deepcopy(test_local_metrics['recall']))
+            test_metrics['vmAP'].append(copy.deepcopy(test_local_metrics['vmAP']))
+            test_metrics['f1'].append(copy.deepcopy(test_local_metrics['f1']))
+
+            """
+            Note: CI environment is CPU-based computing. 
+            The training speed for RNN training is to slow in this setting, so we only test a client to make sure there is no programming error.
+            """
+            if self.args.ci == 1:
+                break
+
+        # test on training dataset
+        train_precision = mean(train_metrics['precision'])
+        train_recall = mean(train_metrics['recall'])
+        train_vmAP = mean(train_metrics['vmAP'])
+        train_f1 = mean(train_metrics['f1'])
+
+        # test on test dataset
+        test_precision = mean(test_metrics['precision'])
+        test_recall = mean(test_metrics['recall'])
+        test_vmAP = mean(test_metrics['vmAP'])
+        test_f1 = mean(test_metrics['f1'])
+
+        stats = {'train_precision': train_precision, 'train_recall': train_recall, 'train_vmAP': train_vmAP, 'train_f1': train_f1}
+        wandb.log({"Train/Precision": train_precision, "round": round_idx})
+        wandb.log({"Train/Recall": train_recall, "round": round_idx})
+        wandb.log({"Train/vmAP": train_vmAP, "round": round_idx})
+        wandb.log({"Train/F1": train_f1, "round": round_idx})
+        logging.info(stats)
+
+        stats = {'test_precision': test_precision, 'test_recall': test_recall, 'test_vmAP': test_vmAP, 'test_f1': test_f1}
+        wandb.log({"Test/Precision": test_precision, "round": round_idx})
+        wandb.log({"Test/Recall": test_recall, "round": round_idx})
+        wandb.log({"Test/vmAP": test_vmAP, "round": round_idx})
+        wandb.log({"Test/F1": test_f1, "round": round_idx})
         logging.info(stats)
 
 
