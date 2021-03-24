@@ -175,6 +175,36 @@ class ListDataset(Dataset):
                 local_count += 1
                 
         return data_num_dict, dataset_dict
+        
+    def count_label(self, client_num):
+        count = 0
+        local_data_num = int(len(self.img_files) / client_num)
+        residual = len(self.img_files) - local_data_num * client_num
+        label_stats = []
+        data_num_dict = {}
+        for i in range(client_num):
+            local_stat = []
+            for j in range(80):
+                local_stat.append(0)
+            if i < residual:
+                data_num_dict[i] = local_data_num + 1
+            else:
+                data_num_dict[i] = local_data_num
+            local_count = 0
+            while(1):
+                if local_count >= data_num_dict[i]:
+                    label_stats.append(local_stat)
+                    break
+                try:
+                    with open(self.label_files[count][:-1], 'r') as f:
+                        for line in iter(f):
+                            label = int(line[:].split(' ')[0])
+                            local_stat[label] += 1
+                except Exception as e:
+                    print(f"Could not read label '{self.label_files[count][:-1]}'.")
+                count += 1
+                local_count += 1
+        return label_stats
 
 class SplitDataset(Dataset):
     def __init__(self, img_files, img_size=416, multiscale=True, transform=None, args=None):

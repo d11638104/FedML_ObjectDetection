@@ -9,6 +9,7 @@ import os
 
 from fedml_api.standalone.fedavg.client import Client
 from statistics import *
+from utils.datasets import *
 
 
 class FedAvgAPI(object):
@@ -73,7 +74,7 @@ class FedAvgAPI(object):
             w_global = self._aggregate(w_locals)
             self.model_trainer.set_model_params(w_global)
             if round_idx % args.checkpoint_interval == 0: # after args.checkpoint_interval epochs store a checkpoint
-                torch.save(self.model_trainer.get_model_params(), f"checkpoints/yolov3_ckpt_%d.pth" % round_idx)
+                torch.save(self.model_trainer.get_model_params(), f"checkpoints/yolov3_ckpt_%s_%s_%d.pth" % (args.dataset, args.batch_size, round_idx))
 
             # test results
             # at last round
@@ -218,9 +219,15 @@ class FedAvgAPI(object):
             """
             if self.test_data_local_dict[client_idx] is None:
                 continue
-            client.update_local_dataset(0, self.train_data_local_dict[client_idx],
+            train_data = []
+            train_num = 0
+            for i in range(0, len(self.train_data_local_dict[client_idx]), 3):
+                train_data.append(self.train_data_local_dict[client_idx].img_files[i])
+                train_num += 1
+            train_data = SplitDataset(train_data, img_size=self.args.img_size, multiscale=False, transform=DEFAULT_TRANSFORMS, args=self.args)
+            client.update_local_dataset(0, train_data,
                                         self.test_data_local_dict[client_idx],
-                                        self.train_data_local_num_dict[client_idx])
+                                        train_num)
             # train data
             train_local_metrics = client.local_test(False)
             train_metrics['precision'].append(copy.deepcopy(train_local_metrics['precision']))
