@@ -47,7 +47,7 @@ def evaluate(model, dataset, iou_thres, conf_thres, nms_thres, img_size, batch_s
     sample_metrics = []  # List of tuples (TP, confs, pred)
     for batch_i, (_, imgs, targets) in enumerate(tqdm.tqdm(dataloader, desc="Detecting objects")):
         
-        if targets is None:
+        if imgs is None or targets is None:
             continue
         
         # Extract labels
@@ -65,7 +65,7 @@ def evaluate(model, dataset, iou_thres, conf_thres, nms_thres, img_size, batch_s
         sample_metrics += get_batch_statistics(outputs, targets, iou_threshold=iou_thres)
     
     if len(sample_metrics) == 0:  # no detections over whole validation set.
-        return None
+        return np.array([0]), np.array([0]), np.array([0]), np.array([0]), None
     
     # Concatenate sample statistics
     true_positives, pred_scores, pred_labels = [np.concatenate(x, 0) for x in list(zip(*sample_metrics))]
@@ -99,28 +99,27 @@ class MyModelTrainer(ModelTrainer):
         optimizer = torch.optim.Adam(model.parameters())
         optimizer.zero_grad()
         
-        batches_done = 1
+        batches_done = 0
 
         epoch_loss = []
         for epoch in range(args.epochs):
             batch_loss = []
             for batch_idx, (_, imgs, targets) in enumerate(dataloader):
-                if imgs == None:
+                if imgs == None or targets == None:
                     continue
                 imgs = Variable(imgs.to(device))
                 targets = Variable(targets.to(device), requires_grad=False)
                 loss, outputs = model(imgs, targets)
-                if type(loss) == int:
-                    continue
                 loss.backward()
-
+                batches_done += 1
+                
                 if batches_done % args.gradient_accumulations == 0:
                     # Accumulates gradient before each step
                     optimizer.step()
                     optimizer.zero_grad()
 
                     batch_loss.append(loss.item())
-                batches_done += 1
+                    
             if len(batch_loss) > 0:
                 epoch_loss.append(sum(batch_loss) / len(batch_loss))
                 logging.info("epoch : {}, loss: {}".format(epoch, sum(batch_loss) / len(batch_loss)))
@@ -134,7 +133,7 @@ class MyModelTrainer(ModelTrainer):
         model.to(device)
         model.eval()
         
-        metrics_output = evaluate(
+        precision, recall, AP, f1, ap_class = evaluate(
                 model,
                 dataset=test_data,
                 iou_thres=0.5,
@@ -146,29 +145,21 @@ class MyModelTrainer(ModelTrainer):
         )
         
         evaluation_metrics = {
-            "precision": 0,
-            "recall": 0,
-            "vmAP": 0,
-            "f1": 0,
-            }
+        "precision": precision.mean(),
+        "recall": recall.mean(),
+        "vmAP": AP.mean(),
+        "f1": f1.mean(),
+        }
         
-        if metrics_output is not None:
-            precision, recall, AP, f1, ap_class = metrics_output
-            evaluation_metrics = {
-            "precision": precision.mean(),
-            "recall": recall.mean(),
-            "vmAP": AP.mean(),
-            "f1": f1.mean(),
-            }
-            
+        if ap_class is None:
+            print( "---- mAP not measured (no detections found by model)")
+        else: 
             # Print class APs and mAP
             ap_table = [["Index", "Class name", "AP"]]
             for i, c in enumerate(ap_class):
-              ap_table += [[c, args.class_names[c], "%.5f" % AP[i]]]
+                ap_table += [[c, args.class_names[c], "%.5f" % AP[i]]]
             print(AsciiTable(ap_table).table)
             print(f"---- mAP {AP.mean()}")                
-        else:
-            print( "---- mAP not measured (no detections found by model)")
 
         return evaluation_metrics
 
